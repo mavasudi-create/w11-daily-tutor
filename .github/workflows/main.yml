@@ -317,6 +317,10 @@ jobs:
         run: |
           git config user.name "W11 Daily Tutor Bot"
           git config user.email "bot@w11-tutor.local"
+          git pull --rebase origin main
+          git add output/
+          git diff --cached --quiet || git commit -m "W11 Anleitungen $(date +'%d.%m.%Y')"
+          git push
           git add output/
           git diff --cached --quiet || git commit -m "W11 Anleitungen $(date +'%d.%m.%Y')"
           git push

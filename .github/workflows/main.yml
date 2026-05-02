@@ -23,12 +23,50 @@ jobs:
       - name: Anleitungen generieren
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: python scripts/gen_daily.py
-
-      - name: Dateien speichern
         run: |
-          git config user.name "W11 Bot"
-          git config user.email "bot@w11.local"
-          git add output/
-          git diff --cached --quiet || git commit -m "W11 Anleitungen $(date +'%d.%m.%Y')"
-          git push
+          cat > run.py << 'PYEOF'
+          import anthropic, os, json, re
+          from datetime import date
+          from pathlib import Path
+
+          client = anthropic.Anthropic()
+          today = date.today()
+
+          prompt = """Erstelle 2 Windows 11 Anleitungen auf Deutsch.
+          Anleitung 1: W11 Basics. Anleitung 2: OneDrive.
+          Antworte NUR mit diesem JSON ohne Backticks:
+          {
+            "anleitungen": [
+              {
+                "nr": 1,
+                "titel": "Emoji Titel",
+                "warum": "Nutzen in 1 Satz",
+                "kategorie": "W11",
+                "dauer": "5 Min",
+                "schritte": [
+                  {"nr": 1, "aktion": "Aktion", "erklaerung": "Erklaerung"},
+                  {"nr": 2, "aktion": "Aktion", "erklaerung": "Erklaerung"},
+                  {"nr": 3, "aktion": "Aktion", "erklaerung": "Erklaerung"}
+                ],
+                "quicktip": "Tipp",
+                "w11_integration": "Hinweis",
+                "faq_frage": "Frage?",
+                "faq_antwort": "Antwort",
+                "unterricht": "Aufgabe"
+              },
+              {
+                "nr": 2,
+                "titel": "Emoji Titel",
+                "warum": "Nutzen in 1 Satz",
+                "kategorie": "OneDrive",
+                "dauer": "5 Min",
+                "schritte": [
+                  {"nr": 1, "aktion": "Aktion", "erklaerung": "Erklaerung"},
+                  {"nr": 2, "aktion": "Aktion", "erklaerung": "Erklaerung"},
+                  {"nr": 3, "aktion": "Aktion", "erklaerung": "Erklaerung"}
+                ],
+                "quicktip": "Tipp",
+                "w11_integration": "Hinweis",
+                "faq_frage": "Frage?",
+                "faq_antwort": "Antwort",
+                "unterri

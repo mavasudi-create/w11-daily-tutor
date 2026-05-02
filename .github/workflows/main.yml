@@ -2,8 +2,8 @@ name: W11 Daily Tutor
 
 on:
   schedule:
-    - cron: "0 5 * * *"
-  workflow_dispatch:
+    - cron: "0 5 * * *"   # Täglich 06:00 Uhr Schweizer Zeit
+  workflow_dispatch:        # Auch manuell startbar
 
 jobs:
   generate:
@@ -12,282 +12,311 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Repository auschecken
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Node.js einrichten
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Python einrichten
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Pakete installieren
-        run: pip install anthropic
+        run: |
+          npm install -g docx
+          pip install anthropic
 
-      - name: Anleitungen generieren und .docx bauen
+      - name: Anleitungen generieren
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        shell: python
         run: |
-          import anthropic, json, re, zipfile, os
+          python3 - <<'PYEOF'
+          import anthropic, json, re, subprocess, os
           from datetime import date
           from pathlib import Path
 
-          # ── Farben & Konstanten ──────────────────────────────────────────
-          TG  = "06F4A1"
-          TGD = "04C984"
-          JQ  = "F0FC9C"
-          CW  = 7504
+          WEEKLY = {
+            0: ("W11 Basics",  "OneDrive"),
+            1: ("Office 365",  "Teams"),
+            2: ("W11 Basics",  "Edge"),
+            3: ("Teams",       "OneDrive"),
+            4: ("Office 365",  "W11 Basics"),
+            5: ("Edge",        "Teams"),
+            6: ("W11 Basics",  "OneDrive"),
+          }
 
-          # ── XML Namespace Header ─────────────────────────────────────────
-          NS = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
-                '<w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" '
-                'xmlns:cx="http://schemas.microsoft.com/office/drawing/2014/chartex" '
-                'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
-                'xmlns:o="urn:schemas-microsoft-com:office:office" '
-                'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
-                'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" '
-                'xmlns:v="urn:schemas-microsoft-com:vml" '
-                'xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing" '
-                'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
-                'xmlns:w10="urn:schemas-microsoft-com:office:word" '
-                'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
-                'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" '
-                'xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" '
-                'xmlns:w16="http://schemas.microsoft.com/office/word/2018/wordml" '
-                'xmlns:w16se="http://schemas.microsoft.com/office/word/2015/wordml/symex" '
-                'xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" '
-                'xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" '
-                'mc:Ignorable="w14 w15 w16se w16 wp14">')
-
-          SECT_PR = """<w:sectPr>
-            <w:headerReference w:type="even" r:id="rId11"/>
-            <w:headerReference w:type="default" r:id="rId12"/>
-            <w:footerReference w:type="even" r:id="rId13"/>
-            <w:footerReference w:type="default" r:id="rId14"/>
-            <w:headerReference w:type="first" r:id="rId15"/>
-            <w:footerReference w:type="first" r:id="rId16"/>
-            <w:pgSz w:w="11906" w:h="16838"/>
-            <w:pgMar w:top="1719" w:right="1701" w:bottom="1015" w:left="1701" w:header="567" w:footer="567" w:gutter="0"/>
-            <w:pgNumType w:start="1" w:chapStyle="1"/>
-            <w:cols w:space="708"/>
-            <w:titlePg/>
-            <w:docGrid w:linePitch="360"/>
-          </w:sectPr>"""
-
-          # ── XML Helfer ───────────────────────────────────────────────────
-          def esc(t):
-              return str(t).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;")
-
-          def rpr(sz=22, bold=False, color=None, italic=False):
-              r = f'<w:rFonts w:ascii="Aptos" w:hAnsi="Aptos" w:cs="Aptos"/><w:sz w:val="{sz}"/><w:szCs w:val="{sz}"/>'
-              if bold:   r = "<w:b/><w:bCs/>" + r
-              if italic: r += "<w:i/>"
-              if color:  r += f'<w:color w:val="{color}"/>'
-              return f"<w:rPr>{r}</w:rPr>"
-
-          def run(text, sz=22, bold=False, color=None, italic=False):
-              return f'<w:r>{rpr(sz,bold,color,italic)}<w:t xml:space="preserve">{esc(text)}</w:t></w:r>'
-
-          def para(content="", align="left", sb=0, sa=120, bb=False, ind=0):
-              ppr = []
-              if sb or sa: ppr.append(f'<w:spacing w:before="{sb}" w:after="{sa}"/>')
-              if align != "left": ppr.append(f'<w:jc w:val="{align}"/>')
-              if ind: ppr.append(f'<w:ind w:left="{ind}" w:hanging="360"/>')
-              if bb:  ppr.append(f'<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="{TG}"/></w:pBdr>')
-              ppr_xml = ("<w:pPr>" + "".join(ppr) + "</w:pPr>") if ppr else ""
-              return f"<w:p>{ppr_xml}{content}</w:p>"
-
-          def sp(n=120): return para(sa=n)
-          def hr(): return para(bb=True, sb=140, sa=140)
-
-          def tbl(paras, fill, left_bar=False, dashed=False, outline=False):
-              none = ""
-              bdr = {
-                  "left":    f'<w:tcBorders><w:left w:val="thick" w:sz="24" w:space="0" w:color="{TG}"/></w:tcBorders>',
-                  "dash":    f'<w:tcBorders><w:top w:val="dashSmallGap" w:sz="8" w:space="0" w:color="AAAAAA"/><w:left w:val="dashSmallGap" w:sz="8" w:space="0" w:color="AAAAAA"/><w:bottom w:val="dashSmallGap" w:sz="8" w:space="0" w:color="AAAAAA"/><w:right w:val="dashSmallGap" w:sz="8" w:space="0" w:color="AAAAAA"/></w:tcBorders>',
-                  "outline": f'<w:tcBorders><w:top w:val="single" w:sz="10" w:space="0" w:color="{TG}"/><w:left w:val="single" w:sz="10" w:space="0" w:color="{TG}"/><w:bottom w:val="single" w:sz="10" w:space="0" w:color="{TG}"/><w:right w:val="single" w:sz="10" w:space="0" w:color="{TG}"/></w:tcBorders>',
-                  "none":    "<w:tcBorders/>"
-              }
-              bk = "left" if left_bar else "dash" if dashed else "outline" if outline else "none"
-              tcPr = (f'<w:tcPr><w:tcW w:w="{CW}" w:type="dxa"/>{bdr[bk]}'
-                      f'<w:shd w:val="clear" w:color="auto" w:fill="{fill}"/>'
-                      f'<w:tcMar><w:top w:w="100" w:type="dxa"/><w:left w:w="180" w:type="dxa"/>'
-                      f'<w:bottom w:w="100" w:type="dxa"/><w:right w:w="180" w:type="dxa"/></w:tcMar></w:tcPr>')
-              tblPr = f'<w:tblPr><w:tblW w:w="{CW}" w:type="dxa"/></w:tblPr>'
-              grid  = f'<w:tblGrid><w:gridCol w:w="{CW}"/></w:tblGrid>'
-              cell  = f'<w:tc>{tcPr}{"".join(paras)}</w:tc>'
-              return f'<w:tbl>{tblPr}{grid}<w:tr>{cell}</w:tr></w:tbl>'
-
-          # ── Komponenten ──────────────────────────────────────────────────
-          def banner(nr, titel, subtitle):
-              b = f'<w:tcBorders><w:top w:val="single" w:sz="12" w:space="0" w:color="{TGD}"/><w:left w:val="thick" w:sz="40" w:space="0" w:color="{TG}"/><w:bottom w:val="single" w:sz="12" w:space="0" w:color="{TGD}"/><w:right w:val="single" w:sz="12" w:space="0" w:color="{TGD}"/></w:tcBorders>'
-              tcPr = f'<w:tcPr><w:tcW w:w="{CW}" w:type="dxa"/>{b}<w:shd w:val="clear" w:color="auto" w:fill="FFFFFF"/><w:tcMar><w:top w:w="160" w:type="dxa"/><w:left w:w="220" w:type="dxa"/><w:bottom w:w="160" w:type="dxa"/><w:right w:w="220" w:type="dxa"/></w:tcMar></w:tcPr>'
-              paras = [
-                  para(run(f"ANLEITUNG {nr}", 18, bold=True, color=TGD), sb=60, sa=40),
-                  para(run(titel, 40, bold=True, color=TG), sa=60),
-                  para(run(subtitle, 20, color="888888", italic=True), sa=60),
-              ]
-              tblPr = f'<w:tblPr><w:tblW w:w="{CW}" w:type="dxa"/></w:tblPr>'
-              grid  = f'<w:tblGrid><w:gridCol w:w="{CW}"/></w:tblGrid>'
-              cell  = f'<w:tc>{tcPr}{"".join(paras)}</w:tc>'
-              return f'<w:tbl>{tblPr}{grid}<w:tr>{cell}</w:tr></w:tbl>'
-
-          def why_box(text):
-              return tbl([para(run("💡 Warum wichtig?   ", 22, bold=True, color="333333") + run(text, 22, color="444444"))], fill=JQ, left_bar=True)
-
-          def step_head(text):
-              return para(run(text, 28, bold=True, color=TG), sb=200, sa=80)
-
-          def illust_box(prompt):
-              return tbl([
-                  para(run("🎨  Illustration — ", 22, bold=True, color=TGD) + run("Prompt für Gemini / Bild-KI:", 20, bold=True, color="444444"), sa=80),
-                  para(run(prompt, 20, color="1A1A1A"), sa=0)
-              ], fill="EDFFF8", outline=True)
-
-          def ss_box(desc, filename):
-              return tbl([
-                  para(run("📷  PLATZHALTER: Echter Screenshot", 22, bold=True, color="333333"), align="center", sa=80),
-                  para(run("Beschreibung: ", 20, bold=True, color="555555") + run(desc, 20, color="555555"), sa=40),
-                  para(run("Dateiname: ", 18, bold=True, color="888888") + run(filename, 18, italic=True, color="888888"), sa=0),
-              ], fill=JQ, dashed=True)
-
-          def info_box(label, lines):
-              return tbl(
-                  [para(run(label, 23, bold=True, color="222222"), sa=80)] +
-                  [para(run(l, 21, color="444444"), sa=60) for l in lines],
-                  fill=JQ, left_bar=True)
-
-          def num_list(items):
-              return [para(run(f"{i+1}.  ", 22, bold=True, color=TGD) + run(t, 22, color="333333"), ind=360, sa=60) for i, t in enumerate(items)]
-
-          def footer_bar(tag):
-              return tbl([para(run("🪟 W11 Daily Tutor  |  ", 18, color="888888") + run(tag, 18, bold=True, color=TGD) + run("  |  Für Schüler & Lehrer", 18, color="888888"), align="center")], fill="F8F8F8")
-
-          # ── Anleitung → XML ──────────────────────────────────────────────
-          def build_xml(a, datum):
-              parts = []
-              parts.append(banner(a["nr"], a["titel"], f"Tag {datum}  |  {a['kategorie']}  |  {a['dauer']}"))
-              parts.append(sp(80))
-              parts.append(why_box(a["warum"]))
-              parts.append(sp(40))
-              parts.append(hr())
-              for s in a["schritte"]:
-                  parts.append(step_head(f"SCHRITT {s['nr']}: {s['aktion']}"))
-                  parts.append(para(run(s["erklaerung"], 22, color="333333"), sa=80))
-                  parts.append(illust_box(a.get("illust_prompt", f"Flat-design cartoon illustration for Windows 11 tutorial step {s['nr']}. Style: school-friendly, turquoise green #06F4A1 and jonquil yellow #F0FC9C, no text in image.")))
-                  parts.append(sp(80))
-                  parts.append(ss_box(f"Screenshot für Schritt {s['nr']}: {s['aktion']}", f"screenshot_anleitung{a['nr']}_schritt{s['nr']}.png"))
-                  parts.append(sp(80))
-              parts.append(hr())
-              parts.append(info_box("🎯 QUICK TIP:", [a["quicktip"]]))
-              parts.append(sp(80))
-              parts.append(info_box("💡 W11-INTEGRATION:", [a["w11_integration"]]))
-              parts.append(sp(80))
-              parts.append(info_box("❓ HÄUFIGE FRAGEN:", [f"F: {a['faq_frage']}", f"A: {a['faq_antwort']}"]))
-              parts.append(sp(80))
-              parts.append(info_box("🎓 FÜR DEN UNTERRICHT:", [a["unterricht"]]))
-              parts.append(sp(120))
-              parts.append(footer_bar(f"{a['kategorie']}  |  {datum}"))
-              return parts
-
-          # ── .docx aus Vorlage bauen ──────────────────────────────────────
-          def build_docx(xml_parts, out_path, template_path):
-              body = "".join(xml_parts)
-              new_doc = f"{NS}<w:body>{body}{SECT_PR}</w:body></w:document>"
-              with zipfile.ZipFile(template_path, "r") as zin:
-                  with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zout:
-                      for item in zin.infolist():
-                          data = new_doc.encode("utf-8") if item.filename == "word/document.xml" else zin.read(item.filename)
-                          zout.writestr(item, data)
-              print(f"✅ {Path(out_path).name}  ({Path(out_path).stat().st_size // 1024} KB)")
-
-          # ── Claude API aufrufen ──────────────────────────────────────────
-          client = anthropic.Anthropic()
           today  = date.today()
           datum  = today.strftime("%d.%m.%Y")
-
-          WEEKLY = {0:("W11","OneDrive"), 1:("Office365","Teams"), 2:("W11","Edge"),
-                    3:("Teams","OneDrive"), 4:("Office365","W11"), 5:("Edge","Teams"), 6:("W11","OneDrive")}
           cat1, cat2 = WEEKLY[today.weekday()]
 
-          prompt = f"""Erstelle 2 Windows 11 Anleitungen für {datum} auf Deutsch.
-          Anleitung 1: Kategorie "{cat1}". Anleitung 2: Kategorie "{cat2}".
-          Antworte NUR mit validem JSON (keine Backticks, kein Text davor/danach):
+          print(f"Generiere Anleitungen fuer {datum}: {cat1} + {cat2}")
+
+          client = anthropic.Anthropic()
+          resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=3000,
+            messages=[{"role": "user", "content": f"""Erstelle 2 Windows 11 Anleitungen auf Deutsch fuer {datum}.
+          Anleitung 1: Kategorie {cat1}. Anleitung 2: Kategorie {cat2}.
+          Antworte NUR mit diesem JSON (keine Backticks):
           {{
             "anleitungen": [
               {{
-                "nr": 1, "titel": "Emoji + Titel (max 6 Wörter)",
-                "warum": "1 Satz Nutzen für Lehrer/Schüler",
-                "kategorie": "{cat1}", "dauer": "5 Min",
+                "nr": 1,
+                "titel": "Kurzer Titel max 5 Woerter",
+                "warum": "1 Satz Nutzen fuer Lehrer oder Schueler",
+                "kategorie": "{cat1}",
+                "dauer": "5 Min",
                 "schritte": [
-                  {{"nr": 1, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklärung"}},
-                  {{"nr": 2, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklärung"}},
-                  {{"nr": 3, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklärung"}}
+                  {{"nr": 1, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklaerung"}},
+                  {{"nr": 2, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklaerung"}},
+                  {{"nr": 3, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklaerung"}}
                 ],
-                "illust_prompt": "Detailed English image prompt for Gemini: flat-design cartoon, school style, turquoise #06F4A1 and jonquil #F0FC9C, no text in image, describe exactly what to show",
-                "quicktip": "Tastenkürzel oder schnellster Weg",
-                "w11_integration": "Wie Feature mit W11 zusammenspielt",
-                "faq_frage": "Typische Anfänger-Frage",
+                "illust_prompt": "Detailed English prompt for Gemini image generation: flat-design cartoon school style, turquoise #06F4A1 and jonquil #F0FC9C colors, no text in image, describe exactly what to show",
+                "quicktip": "Tastenkuerzel oder schnellster Weg",
+                "w11_integration": "Wie dieses Feature mit Windows 11 zusammenspielt",
+                "faq_frage": "Typische Anfaenger-Frage",
                 "faq_antwort": "Kurze klare Antwort",
-                "unterricht": "Konkrete Schüleraufgabe in 2-3 Schritten"
+                "unterricht": "Konkrete Schueleraufgabe in 3 Schritten"
               }},
               {{
-                "nr": 2, "titel": "Emoji + Titel (max 6 Wörter)",
-                "warum": "1 Satz Nutzen für Lehrer/Schüler",
-                "kategorie": "{cat2}", "dauer": "5 Min",
+                "nr": 2,
+                "titel": "Kurzer Titel max 5 Woerter",
+                "warum": "1 Satz Nutzen fuer Lehrer oder Schueler",
+                "kategorie": "{cat2}",
+                "dauer": "5 Min",
                 "schritte": [
-                  {{"nr": 1, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklärung"}},
-                  {{"nr": 2, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklärung"}},
-                  {{"nr": 3, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklärung"}}
+                  {{"nr": 1, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklaerung"}},
+                  {{"nr": 2, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklaerung"}},
+                  {{"nr": 3, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklaerung"}}
                 ],
-                "illust_prompt": "Detailed English image prompt for Gemini: flat-design cartoon, school style, turquoise #06F4A1 and jonquil #F0FC9C, no text in image, describe exactly what to show",
-                "quicktip": "Tastenkürzel oder schnellster Weg",
-                "w11_integration": "Wie Feature mit W11 zusammenspielt",
-                "faq_frage": "Typische Anfänger-Frage",
+                "illust_prompt": "Detailed English prompt for Gemini image generation: flat-design cartoon school style, turquoise #06F4A1 and jonquil #F0FC9C colors, no text in image, describe exactly what to show",
+                "quicktip": "Tastenkuerzel oder schnellster Weg",
+                "w11_integration": "Wie dieses Feature mit Windows 11 zusammenspielt",
+                "faq_frage": "Typische Anfaenger-Frage",
                 "faq_antwort": "Kurze klare Antwort",
-                "unterricht": "Konkrete Schüleraufgabe in 2-3 Schritten"
+                "unterricht": "Konkrete Schueleraufgabe in 3 Schritten"
               }}
             ]
-          }}"""
-
-          print(f"🤖 Claude wird aufgerufen für {datum} ({cat1} + {cat2})...")
-          resp = client.messages.create(
-              model="claude-haiku-4-5-20251001",
-              max_tokens=3000,
-              messages=[{"role": "user", "content": prompt}]
+          }}"""}]
           )
+
           raw = resp.content[0].text.strip()
           raw = re.sub(r"^```[a-z]*\s*", "", raw)
           raw = re.sub(r"\s*```$", "", raw)
           data = json.loads(raw)
-          print(f"✅ Claude hat {len(data['anleitungen'])} Anleitungen generiert")
 
-          # Template suchen
-          template = None
-          for p in ["W11_DailyTutor_GitHub_Setup/template/Vorlage_Fachschaft_Digitalitaet.dotx",
-                    "template/Vorlage_Fachschaft_Digitalitaet.dotx"]:
-              if Path(p).exists():
-                  template = p
-                  break
-          if not template:
-              raise FileNotFoundError("Vorlage nicht gefunden!")
-          print(f"📄 Vorlage gefunden: {template}")
+          Path("output_data").mkdir(exist_ok=True)
+          with open("output_data/today.json", "w", encoding="utf-8") as f:
+              json.dump({"datum": datum, "anleitungen": data["anleitungen"]}, f, ensure_ascii=False, indent=2)
 
-          # Output-Ordner
-          out_dir = Path("output") / today.strftime("%d-%m-%Y")
-          out_dir.mkdir(parents=True, exist_ok=True)
+          print(f"✅ JSON gespeichert: {len(data['anleitungen'])} Anleitungen")
+          PYEOF
 
-          # Beide .docx bauen
-          for a in data["anleitungen"]:
-              titel_safe = re.sub(r"[^\w]", "_", a["titel"])[:40]
-              fname = out_dir / f"W11_{datum}_Anleitung{a['nr']}_{titel_safe}.docx"
-              xml_parts = build_xml(a, datum)
-              build_docx(xml_parts, str(fname), template)
+      - name: Word-Dokumente erstellen
+        run: |
+          node - <<'JSEOF'
+          const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
+                  AlignmentType, BorderStyle, WidthType, ShadingType, LevelFormat } = require('docx');
+          const fs = require('fs');
 
-          print(f"\n🎉 Fertig! Dateien in: {out_dir}")
+          const data   = JSON.parse(fs.readFileSync('output_data/today.json', 'utf8'));
+          const datum  = data.datum;
+          const FONT   = "Aptos";
+          const TG     = "06F4A1";
+          const BLACK  = "000000";
+          const GREY   = "444444";
+          const LGREY  = "888888";
+          const JQ     = "F0FC9C";
+          const CW     = 9360;
+
+          const t = (text, opts={}) => new TextRun({ text, font: FONT, ...opts });
+          const p = (runs, opts={}) => new Paragraph({
+            children: Array.isArray(runs) ? runs : [runs],
+            spacing: { before: 0, after: 120 }, ...opts
+          });
+          const sp = (after=160) => new Paragraph({ children:[t("")], spacing:{before:0,after} });
+          const hr = () => new Paragraph({
+            children: [],
+            border: { bottom: { style: BorderStyle.SINGLE, size:8, color:TG, space:1 } },
+            spacing: { before:160, after:160 }
+          });
+
+          const oneColTable = (cellEl) => new Table({
+            width:{size:CW,type:WidthType.DXA}, columnWidths:[CW],
+            rows:[new TableRow({children:[cellEl]})]
+          });
+
+          const leftBarCell = (children, fill) => new TableCell({
+            width:{size:CW,type:WidthType.DXA},
+            shading:{fill,type:ShadingType.CLEAR},
+            margins:{top:120,bottom:120,left:200,right:180},
+            borders:{
+              top:{style:BorderStyle.NONE},bottom:{style:BorderStyle.NONE},
+              left:{style:BorderStyle.THICK,size:20,color:TG},
+              right:{style:BorderStyle.NONE}
+            }, children
+          });
+
+          const outlineCell = (children, fill) => new TableCell({
+            width:{size:CW,type:WidthType.DXA},
+            shading:{fill,type:ShadingType.CLEAR},
+            margins:{top:120,bottom:120,left:180,right:180},
+            borders:{
+              top:{style:BorderStyle.SINGLE,size:8,color:TG},
+              bottom:{style:BorderStyle.SINGLE,size:8,color:TG},
+              left:{style:BorderStyle.SINGLE,size:8,color:TG},
+              right:{style:BorderStyle.SINGLE,size:8,color:TG}
+            }, children
+          });
+
+          const dashCell = (children) => new TableCell({
+            width:{size:CW,type:WidthType.DXA},
+            shading:{fill:JQ,type:ShadingType.CLEAR},
+            margins:{top:120,bottom:120,left:180,right:180},
+            borders:{
+              top:{style:BorderStyle.DASH_SMALL_GAP,size:6,color:"AAAAAA"},
+              bottom:{style:BorderStyle.DASH_SMALL_GAP,size:6,color:"AAAAAA"},
+              left:{style:BorderStyle.DASH_SMALL_GAP,size:6,color:"AAAAAA"},
+              right:{style:BorderStyle.DASH_SMALL_GAP,size:6,color:"AAAAAA"}
+            }, children
+          });
+
+          const banner = (nr, titel, subtitle) => new Table({
+            width:{size:CW,type:WidthType.DXA}, columnWidths:[CW],
+            rows:[new TableRow({children:[new TableCell({
+              width:{size:CW,type:WidthType.DXA},
+              shading:{fill:"FFFFFF",type:ShadingType.CLEAR},
+              margins:{top:160,bottom:160,left:220,right:220},
+              borders:{
+                top:{style:BorderStyle.SINGLE,size:10,color:TG},
+                bottom:{style:BorderStyle.SINGLE,size:10,color:TG},
+                left:{style:BorderStyle.THICK,size:36,color:TG},
+                right:{style:BorderStyle.SINGLE,size:10,color:TG}
+              },
+              children:[
+                p(t(`ANLEITUNG ${nr}`,{size:18,bold:true,color:LGREY}),{spacing:{before:0,after:60}}),
+                p(t(titel,{size:40,bold:true,color:TG}),{spacing:{before:0,after:80}}),
+                p(t(subtitle,{size:20,italics:true,color:LGREY}),{spacing:{before:0,after:0}}),
+              ]
+            })]})]
+          });
+
+          const whyBox  = (text) => oneColTable(leftBarCell([
+            p([t("Warum wichtig?   ",{size:22,bold:true,color:BLACK}), t(text,{size:22,color:GREY})],
+              {spacing:{before:0,after:0}})
+          ], JQ));
+
+          const stepHead = (text) => p(t(text,{size:28,bold:true,color:TG}),{spacing:{before:200,after:80}});
+
+          const illustBox = (prompt) => oneColTable(outlineCell([
+            p([t("ILLUSTRATION  —  ",{size:21,bold:true,color:TG}),
+               t("Prompt fuer Gemini / Bild-KI:",{size:20,bold:true,color:GREY})],
+              {spacing:{before:0,after:80}}),
+            p(t(prompt,{size:20,color:BLACK}),{spacing:{before:0,after:0}})
+          ], "EDFFF8"));
+
+          const ssBox = (desc, fname) => oneColTable(dashCell([
+            p(t("PLATZHALTER: Echter Screenshot",{size:21,bold:true,color:BLACK}),
+              {alignment:AlignmentType.CENTER,spacing:{before:0,after:80}}),
+            p([t("Beschreibung: ",{size:20,bold:true,color:GREY}),t(desc,{size:20,color:GREY})],
+              {spacing:{before:0,after:40}}),
+            p([t("Dateiname: ",{size:18,bold:true,color:LGREY}),t(fname,{size:18,italics:true,color:LGREY})],
+              {spacing:{before:0,after:0}})
+          ]));
+
+          const infoBox = (label, lines) => oneColTable(leftBarCell([
+            p(t(label,{size:22,bold:true,color:BLACK}),{spacing:{before:0,after:80}}),
+            ...lines.map(l => p(t(l,{size:21,color:GREY}),{spacing:{before:0,after:60}}))
+          ], JQ));
+
+          const footerBar = (tag) => oneColTable(new TableCell({
+            width:{size:CW,type:WidthType.DXA},
+            shading:{fill:"F5F5F5",type:ShadingType.CLEAR},
+            margins:{top:120,bottom:120,left:180,right:180},
+            borders:{top:{style:BorderStyle.NONE},bottom:{style:BorderStyle.NONE},
+                     left:{style:BorderStyle.NONE},right:{style:BorderStyle.NONE}},
+            children:[p([
+              t("W11 Daily Tutor  |  ",{size:18,color:LGREY}),
+              t(tag,{size:18,bold:true,color:TG}),
+              t("  |  Fuer Schueler und Lehrer",{size:18,color:LGREY})
+            ],{alignment:AlignmentType.CENTER,spacing:{before:0,after:0}})]
+          }));
+
+          const numbering = { config: [
+            { reference:"numlist", levels:[{ level:0, format:LevelFormat.DECIMAL, text:"%1.",
+                alignment:AlignmentType.LEFT,
+                style:{paragraph:{indent:{left:600,hanging:360}},run:{font:FONT,bold:true,color:TG}}}]},
+            { reference:"bullist", levels:[{ level:0, format:LevelFormat.BULLET, text:"•",
+                alignment:AlignmentType.LEFT,
+                style:{paragraph:{indent:{left:600,hanging:360}},run:{font:FONT}}}]}
+          ]};
+
+          const styles = { default:{ document:{ run:{ font:FONT, size:22, color:BLACK }}}};
+          const pageProps = { properties:{ page:{
+            size:{width:11906,height:16838},
+            margin:{top:1080,right:1080,bottom:1080,left:1080}
+          }}};
+
+          const numList = (items) => items.map(text =>
+            new Paragraph({ numbering:{reference:"numlist",level:0},
+              children:[t(text,{size:22,color:BLACK})], spacing:{before:0,after:80} })
+          );
+          const bulList = (items) => items.map(text =>
+            new Paragraph({ numbering:{reference:"bullist",level:0},
+              children:[t(text,{size:22,color:BLACK})], spacing:{before:0,after:60} })
+          );
+
+          function buildChildren(a) {
+            const kids = [];
+            kids.push(banner(a.nr, a.titel, `${datum}  |  ${a.kategorie}  |  ${a.dauer}`));
+            kids.push(sp(100));
+            kids.push(whyBox(a.warum));
+            kids.push(sp(60)); kids.push(hr());
+            for (const s of a.schritte) {
+              kids.push(stepHead(`SCHRITT ${s.nr}: ${s.aktion}`));
+              kids.push(p(t(s.erklaerung, {size:22,color:GREY}), {spacing:{before:0,after:80}}));
+              kids.push(illustBox(a.illust_prompt));
+              kids.push(sp(80));
+              kids.push(ssBox(`Screenshot fuer Schritt ${s.nr}: ${s.aktion}`,
+                              `screenshot_anleitung${a.nr}_schritt${s.nr}.png`));
+              kids.push(sp(80));
+            }
+            kids.push(hr());
+            kids.push(infoBox("QUICK TIP:", [a.quicktip]));
+            kids.push(sp(80));
+            kids.push(infoBox("W11-INTEGRATION:", [a.w11_integration]));
+            kids.push(sp(80));
+            kids.push(infoBox("HAEUFIGE FRAGEN:", [`F: ${a.faq_frage}`, `A: ${a.faq_antwort}`]));
+            kids.push(sp(80));
+            kids.push(infoBox("FUER DEN UNTERRICHT:", [a.unterricht]));
+            kids.push(sp(120));
+            kids.push(footerBar(`${a.kategorie}  |  ${datum}`));
+            return kids;
+          }
+
+          const outDir = `output/${datum.replace(/\./g,"-")}`;
+          require('fs').mkdirSync(outDir, {recursive:true});
+
+          (async () => {
+            for (const a of data.anleitungen) {
+              const doc = new Document({ numbering, styles, sections:[{...pageProps, children:buildChildren(a)}] });
+              const buf = await Packer.toBuffer(doc);
+              const safe = a.titel.replace(/[^\w]/g,"_").substring(0,40);
+              const fname = `${outDir}/W11_${datum}_Anleitung${a.nr}_${safe}.docx`;
+              fs.writeFileSync(fname, buf);
+              console.log(`✅ ${fname}  (${Math.round(buf.length/1024)} KB)`);
+            }
+          })().catch(e => { console.error("❌", e.message); process.exit(1); });
+          JSEOF
 
       - name: Dateien in GitHub speichern
         run: |
           git config user.name "W11 Daily Tutor Bot"
           git config user.email "bot@w11-tutor.local"
           git add output/
-          git diff --cached --quiet || git commit -m "📚 W11 Anleitungen $(date +'%d.%m.%Y') (.docx)"
+          git diff --cached --quiet || git commit -m "W11 Anleitungen $(date +'%d.%m.%Y')"
           git push

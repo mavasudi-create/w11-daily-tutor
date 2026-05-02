@@ -28,7 +28,7 @@ jobs:
       - name: Pakete installieren
         run: |
           npm install docx
-          pip install anthropic
+          pip install anthropic google-genai
 
       - name: Anleitungen generieren
         env:
@@ -52,7 +52,7 @@ jobs:
           today = date.today()
           datum = today.strftime("%d.%m.%Y")
           cat1, cat2 = WEEKLY[today.weekday()]
-          print(f"Datum: {datum} | Kategorien: {cat1} + {cat2}")
+          print(f"Datum: {datum} | {cat1} + {cat2}")
 
           client = anthropic.Anthropic()
           resp = client.messages.create(
@@ -62,28 +62,38 @@ jobs:
           Anleitung 1: Kategorie {cat1}. Anleitung 2: Kategorie {cat2}.
           Antworte NUR mit diesem JSON ohne Backticks:
           {{"anleitungen": [
-            {{"nr": 1, "titel": "Kurzer Titel", "warum": "1 Satz Nutzen",
+            {{"nr": 1, "titel": "Kurzer Titel max 5 Woerter",
+              "warum": "1 Satz Nutzen",
               "kategorie": "{cat1}", "dauer": "5 Min",
               "schritte": [
-                {{"nr": 1, "aktion": "Aktion", "erklaerung": "Erklaerung"}},
-                {{"nr": 2, "aktion": "Aktion", "erklaerung": "Erklaerung"}},
-                {{"nr": 3, "aktion": "Aktion", "erklaerung": "Erklaerung"}}
+                {{"nr": 1, "aktion": "Aktion", "erklaerung": "Erklaerung",
+                  "illust_prompt": "Flat-design cartoon school style for Windows 11 tutorial. Show step 1 visually. Turquoise #06F4A1 and jonquil #F0FC9C colors. No text in image. Friendly and clear."}},
+                {{"nr": 2, "aktion": "Aktion", "erklaerung": "Erklaerung",
+                  "illust_prompt": "Flat-design cartoon school style for Windows 11 tutorial. Show step 2 visually. Turquoise #06F4A1 and jonquil #F0FC9C colors. No text in image. Friendly and clear."}},
+                {{"nr": 3, "aktion": "Aktion", "erklaerung": "Erklaerung",
+                  "illust_prompt": "Flat-design cartoon school style for Windows 11 tutorial. Show step 3 visually. Turquoise #06F4A1 and jonquil #F0FC9C colors. No text in image. Friendly and clear."}}
               ],
-              "illust_prompt": "Flat-design cartoon school style, turquoise #06F4A1 and jonquil #F0FC9C, no text in image, describe what to show",
-              "quicktip": "Tipp", "w11_integration": "W11 Hinweis",
-              "faq_frage": "Frage?", "faq_antwort": "Antwort",
-              "unterricht": "Schueleraufgabe"}},
-            {{"nr": 2, "titel": "Kurzer Titel", "warum": "1 Satz Nutzen",
+              "quicktip": "Tipp",
+              "w11_integration": "W11 Hinweis",
+              "faq_frage": "Frage?",
+              "faq_antwort": "Antwort",
+              "unterricht": "Schueleraufgabe in 3 Schritten"}},
+            {{"nr": 2, "titel": "Kurzer Titel max 5 Woerter",
+              "warum": "1 Satz Nutzen",
               "kategorie": "{cat2}", "dauer": "5 Min",
               "schritte": [
-                {{"nr": 1, "aktion": "Aktion", "erklaerung": "Erklaerung"}},
-                {{"nr": 2, "aktion": "Aktion", "erklaerung": "Erklaerung"}},
-                {{"nr": 3, "aktion": "Aktion", "erklaerung": "Erklaerung"}}
+                {{"nr": 1, "aktion": "Aktion", "erklaerung": "Erklaerung",
+                  "illust_prompt": "Flat-design cartoon school style for Windows 11 tutorial. Show step 1 visually. Turquoise #06F4A1 and jonquil #F0FC9C colors. No text in image. Friendly and clear."}},
+                {{"nr": 2, "aktion": "Aktion", "erklaerung": "Erklaerung",
+                  "illust_prompt": "Flat-design cartoon school style for Windows 11 tutorial. Show step 2 visually. Turquoise #06F4A1 and jonquil #F0FC9C colors. No text in image. Friendly and clear."}},
+                {{"nr": 3, "aktion": "Aktion", "erklaerung": "Erklaerung",
+                  "illust_prompt": "Flat-design cartoon school style for Windows 11 tutorial. Show step 3 visually. Turquoise #06F4A1 and jonquil #F0FC9C colors. No text in image. Friendly and clear."}}
               ],
-              "illust_prompt": "Flat-design cartoon school style, turquoise #06F4A1 and jonquil #F0FC9C, no text in image, describe what to show",
-              "quicktip": "Tipp", "w11_integration": "W11 Hinweis",
-              "faq_frage": "Frage?", "faq_antwort": "Antwort",
-              "unterricht": "Schueleraufgabe"}}
+              "quicktip": "Tipp",
+              "w11_integration": "W11 Hinweis",
+              "faq_frage": "Frage?",
+              "faq_antwort": "Antwort",
+              "unterricht": "Schueleraufgabe in 3 Schritten"}}
           ]}}"""}]
           )
 
@@ -96,6 +106,52 @@ jobs:
           with open("output_data/today.json", "w", encoding="utf-8") as f:
               json.dump({"datum": datum, "anleitungen": data["anleitungen"]}, f, ensure_ascii=False, indent=2)
           print(f"✅ {len(data['anleitungen'])} Anleitungen gespeichert")
+          PYEOF
+
+      - name: Bilder mit Gemini generieren
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, json, time
+          from pathlib import Path
+          from google import genai
+          from google.genai import types
+
+          data  = json.loads(Path("output_data/today.json").read_text())
+          datum = data["datum"]
+          out_dir = Path("output") / datum.replace(".", "-")
+          out_dir.mkdir(parents=True, exist_ok=True)
+
+          client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+
+          total = 0
+          for a in data["anleitungen"]:
+              for s in a["schritte"]:
+                  prompt = s["illust_prompt"]
+                  fname  = out_dir / f"Anleitung{a['nr']}_Schritt{s['nr']}.png"
+
+                  print(f"  Generiere: Anleitung {a['nr']} Schritt {s['nr']}...")
+                  try:
+                      resp = client.models.generate_content(
+                          model="gemini-2.5-flash-preview-05-20",
+                          contents=prompt,
+                          config=types.GenerateContentConfig(
+                              response_modalities=["Text", "Image"]
+                          )
+                      )
+                      for part in resp.candidates[0].content.parts:
+                          if part.inline_data is not None:
+                              fname.write_bytes(part.inline_data.data)
+                              print(f"  ✅ {fname.name}  ({len(part.inline_data.data)//1024} KB)")
+                              total += 1
+                              break
+                  except Exception as e:
+                      print(f"  ⚠️ Fehler bei {fname.name}: {e}")
+
+                  time.sleep(3)  # Rate limit einhalten
+
+          print(f"\n✅ {total} Bilder generiert in {out_dir}")
           PYEOF
 
       - name: Word-Dokumente erstellen
@@ -195,11 +251,13 @@ jobs:
           const stepHead = (text) =>
             p(t(text,{size:28,bold:true,color:TG}),{spacing:{before:200,after:80}});
 
-          const illustBox = (prompt) => oneColTable(outlineCell([
+          const illustBox = (prompt, imgNote) => oneColTable(outlineCell([
             p([t("ILLUSTRATION  -  ",{size:21,bold:true,color:TG}),
                t("Prompt fuer Gemini / Bild-KI:",{size:20,bold:true,color:GREY})],
               {spacing:{before:0,after:80}}),
-            p(t(prompt,{size:20,color:BLACK}),{spacing:{before:0,after:0}})
+            p(t(prompt,{size:20,color:BLACK}),{spacing:{before:0,after:60}}),
+            p([t("Bilddatei: ",{size:18,bold:true,color:LGREY}),
+               t(imgNote,{size:18,italics:true,color:TG})],{spacing:{before:0,after:0}})
           ], "EDFFF8"));
 
           const ssBox = (desc, fname) => oneColTable(dashCell([
@@ -256,15 +314,18 @@ jobs:
             kids.push(sp(100));
             kids.push(whyBox(a.warum));
             kids.push(sp(60)); kids.push(hr());
+
             for (const s of a.schritte) {
               kids.push(stepHead(`SCHRITT ${s.nr}: ${s.aktion}`));
               kids.push(p(t(s.erklaerung,{size:22,color:GREY}),{spacing:{before:0,after:80}}));
-              kids.push(illustBox(a.illust_prompt));
+              const imgFile = `Anleitung${a.nr}_Schritt${s.nr}.png`;
+              kids.push(illustBox(s.illust_prompt, `➜ Bilddatei im Ordner: ${imgFile}`));
               kids.push(sp(80));
               kids.push(ssBox(`Screenshot Schritt ${s.nr}: ${s.aktion}`,
                               `screenshot_anleitung${a.nr}_schritt${s.nr}.png`));
               kids.push(sp(80));
             }
+
             kids.push(hr());
             kids.push(infoBox("QUICK TIP:", [a.quicktip]));
             kids.push(sp(80));
@@ -302,5 +363,5 @@ jobs:
           git config user.email "bot@w11-tutor.local"
           git pull --rebase origin main
           git add output/
-          git diff --cached --quiet || git commit -m "W11 Anleitungen $(date +'%d.%m.%Y')"
+          git diff --cached --quiet || git commit -m "W11 Anleitungen + Bilder $(date +'%d.%m.%Y')"
           git push

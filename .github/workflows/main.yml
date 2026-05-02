@@ -23,50 +23,56 @@ jobs:
       - name: Anleitungen generieren
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        shell: python
         run: |
-          cat > run.py << 'PYEOF'
-          import anthropic, os, json, re
+          import anthropic, json, re
           from datetime import date
           from pathlib import Path
 
           client = anthropic.Anthropic()
           today = date.today()
 
-          prompt = """Erstelle 2 Windows 11 Anleitungen auf Deutsch.
-          Anleitung 1: W11 Basics. Anleitung 2: OneDrive.
-          Antworte NUR mit diesem JSON ohne Backticks:
-          {
-            "anleitungen": [
-              {
-                "nr": 1,
-                "titel": "Emoji Titel",
-                "warum": "Nutzen in 1 Satz",
-                "kategorie": "W11",
-                "dauer": "5 Min",
-                "schritte": [
-                  {"nr": 1, "aktion": "Aktion", "erklaerung": "Erklaerung"},
-                  {"nr": 2, "aktion": "Aktion", "erklaerung": "Erklaerung"},
-                  {"nr": 3, "aktion": "Aktion", "erklaerung": "Erklaerung"}
-                ],
-                "quicktip": "Tipp",
-                "w11_integration": "Hinweis",
-                "faq_frage": "Frage?",
-                "faq_antwort": "Antwort",
-                "unterricht": "Aufgabe"
-              },
-              {
-                "nr": 2,
-                "titel": "Emoji Titel",
-                "warum": "Nutzen in 1 Satz",
-                "kategorie": "OneDrive",
-                "dauer": "5 Min",
-                "schritte": [
-                  {"nr": 1, "aktion": "Aktion", "erklaerung": "Erklaerung"},
-                  {"nr": 2, "aktion": "Aktion", "erklaerung": "Erklaerung"},
-                  {"nr": 3, "aktion": "Aktion", "erklaerung": "Erklaerung"}
-                ],
-                "quicktip": "Tipp",
-                "w11_integration": "Hinweis",
-                "faq_frage": "Frage?",
-                "faq_antwort": "Antwort",
-                "unterri
+          prompt = "Erstelle 2 Windows 11 Anleitungen auf Deutsch. Anleitung 1 Kategorie W11 Basics, Anleitung 2 Kategorie OneDrive. Antworte NUR mit validem JSON ohne Backticks: {\"anleitungen\": [{\"nr\": 1, \"titel\": \"Emoji Titel\", \"warum\": \"Nutzen\", \"kategorie\": \"W11\", \"dauer\": \"5 Min\", \"schritte\": [{\"nr\": 1, \"aktion\": \"Aktion\", \"erklaerung\": \"Text\"}, {\"nr\": 2, \"aktion\": \"Aktion\", \"erklaerung\": \"Text\"}, {\"nr\": 3, \"aktion\": \"Aktion\", \"erklaerung\": \"Text\"}], \"quicktip\": \"Tipp\", \"w11_integration\": \"Hinweis\", \"faq_frage\": \"Frage?\", \"faq_antwort\": \"Antwort\", \"unterricht\": \"Aufgabe\"}, {\"nr\": 2, \"titel\": \"Emoji Titel\", \"warum\": \"Nutzen\", \"kategorie\": \"OneDrive\", \"dauer\": \"5 Min\", \"schritte\": [{\"nr\": 1, \"aktion\": \"Aktion\", \"erklaerung\": \"Text\"}, {\"nr\": 2, \"aktion\": \"Aktion\", \"erklaerung\": \"Text\"}, {\"nr\": 3, \"aktion\": \"Aktion\", \"erklaerung\": \"Text\"}], \"quicktip\": \"Tipp\", \"w11_integration\": \"Hinweis\", \"faq_frage\": \"Frage?\", \"faq_antwort\": \"Antwort\", \"unterricht\": \"Aufgabe\"}]}"
+
+          resp = client.messages.create(
+              model="claude-haiku-4-5-20251001",
+              max_tokens=3000,
+              messages=[{"role": "user", "content": prompt}]
+          )
+          raw = resp.content[0].text.strip()
+          raw = re.sub(r"^```[a-z]*\s*", "", raw)
+          raw = re.sub(r"\s*```$", "", raw)
+          data = json.loads(raw)
+
+          out_dir = Path("output") / today.strftime("%d-%m-%Y")
+          out_dir.mkdir(parents=True, exist_ok=True)
+
+          for a in data["anleitungen"]:
+              titel_safe = re.sub(r"[^\w]", "_", a["titel"])[:40]
+              fname = out_dir / f"W11_Anleitung{a['nr']}_{titel_safe}.md"
+              lines = [
+                  f"# {a['titel']}",
+                  f"**Warum:** {a['warum']}",
+                  f"**Kategorie:** {a['kategorie']} | **Dauer:** {a['dauer']}",
+                  "", "---", "",
+              ]
+              for s in a["schritte"]:
+                  lines += [f"## Schritt {s['nr']}: {s['aktion']}", s["erklaerung"], "", f"Screenshot Platzhalter Schritt {s['nr']}", ""]
+              lines += [
+                  "---", "",
+                  f"Quick Tip: {a['quicktip']}", "",
+                  f"W11-Integration: {a['w11_integration']}", "",
+                  f"Frage: {a['faq_frage']}",
+                  f"Antwort: {a['faq_antwort']}", "",
+                  f"Unterricht: {a['unterricht']}"
+              ]
+              fname.write_text("\n".join(lines), encoding="utf-8")
+              print(f"OK: {fname}")
+
+      - name: Dateien speichern
+        run: |
+          git config user.name "W11 Bot"
+          git config user.email "bot@w11.local"
+          git add output/
+          git diff --cached --quiet || git commit -m "W11 Anleitungen $(date +'%d.%m.%Y')"
+          git push

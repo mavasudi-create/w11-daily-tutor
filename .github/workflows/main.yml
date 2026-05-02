@@ -18,22 +18,237 @@ jobs:
         with:
           python-version: "3.11"
 
-      - run: pip install anthropic
+      - name: Pakete installieren
+        run: pip install anthropic
 
-      - name: Anleitungen generieren
+      - name: Anleitungen generieren und .docx bauen
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         shell: python
         run: |
-          import anthropic, json, re
+          import anthropic, json, re, zipfile, os
           from datetime import date
           from pathlib import Path
 
+          # ── Farben & Konstanten ──────────────────────────────────────────
+          TG  = "06F4A1"
+          TGD = "04C984"
+          JQ  = "F0FC9C"
+          CW  = 7504
+
+          # ── XML Namespace Header ─────────────────────────────────────────
+          NS = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
+                '<w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" '
+                'xmlns:cx="http://schemas.microsoft.com/office/drawing/2014/chartex" '
+                'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+                'xmlns:o="urn:schemas-microsoft-com:office:office" '
+                'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+                'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" '
+                'xmlns:v="urn:schemas-microsoft-com:vml" '
+                'xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing" '
+                'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+                'xmlns:w10="urn:schemas-microsoft-com:office:word" '
+                'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+                'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" '
+                'xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" '
+                'xmlns:w16="http://schemas.microsoft.com/office/word/2018/wordml" '
+                'xmlns:w16se="http://schemas.microsoft.com/office/word/2015/wordml/symex" '
+                'xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" '
+                'xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" '
+                'mc:Ignorable="w14 w15 w16se w16 wp14">')
+
+          SECT_PR = """<w:sectPr>
+            <w:headerReference w:type="even" r:id="rId11"/>
+            <w:headerReference w:type="default" r:id="rId12"/>
+            <w:footerReference w:type="even" r:id="rId13"/>
+            <w:footerReference w:type="default" r:id="rId14"/>
+            <w:headerReference w:type="first" r:id="rId15"/>
+            <w:footerReference w:type="first" r:id="rId16"/>
+            <w:pgSz w:w="11906" w:h="16838"/>
+            <w:pgMar w:top="1719" w:right="1701" w:bottom="1015" w:left="1701" w:header="567" w:footer="567" w:gutter="0"/>
+            <w:pgNumType w:start="1" w:chapStyle="1"/>
+            <w:cols w:space="708"/>
+            <w:titlePg/>
+            <w:docGrid w:linePitch="360"/>
+          </w:sectPr>"""
+
+          # ── XML Helfer ───────────────────────────────────────────────────
+          def esc(t):
+              return str(t).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;")
+
+          def rpr(sz=22, bold=False, color=None, italic=False):
+              r = f'<w:rFonts w:ascii="Aptos" w:hAnsi="Aptos" w:cs="Aptos"/><w:sz w:val="{sz}"/><w:szCs w:val="{sz}"/>'
+              if bold:   r = "<w:b/><w:bCs/>" + r
+              if italic: r += "<w:i/>"
+              if color:  r += f'<w:color w:val="{color}"/>'
+              return f"<w:rPr>{r}</w:rPr>"
+
+          def run(text, sz=22, bold=False, color=None, italic=False):
+              return f'<w:r>{rpr(sz,bold,color,italic)}<w:t xml:space="preserve">{esc(text)}</w:t></w:r>'
+
+          def para(content="", align="left", sb=0, sa=120, bb=False, ind=0):
+              ppr = []
+              if sb or sa: ppr.append(f'<w:spacing w:before="{sb}" w:after="{sa}"/>')
+              if align != "left": ppr.append(f'<w:jc w:val="{align}"/>')
+              if ind: ppr.append(f'<w:ind w:left="{ind}" w:hanging="360"/>')
+              if bb:  ppr.append(f'<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" w:color="{TG}"/></w:pBdr>')
+              ppr_xml = ("<w:pPr>" + "".join(ppr) + "</w:pPr>") if ppr else ""
+              return f"<w:p>{ppr_xml}{content}</w:p>"
+
+          def sp(n=120): return para(sa=n)
+          def hr(): return para(bb=True, sb=140, sa=140)
+
+          def tbl(paras, fill, left_bar=False, dashed=False, outline=False):
+              none = ""
+              bdr = {
+                  "left":    f'<w:tcBorders><w:left w:val="thick" w:sz="24" w:space="0" w:color="{TG}"/></w:tcBorders>',
+                  "dash":    f'<w:tcBorders><w:top w:val="dashSmallGap" w:sz="8" w:space="0" w:color="AAAAAA"/><w:left w:val="dashSmallGap" w:sz="8" w:space="0" w:color="AAAAAA"/><w:bottom w:val="dashSmallGap" w:sz="8" w:space="0" w:color="AAAAAA"/><w:right w:val="dashSmallGap" w:sz="8" w:space="0" w:color="AAAAAA"/></w:tcBorders>',
+                  "outline": f'<w:tcBorders><w:top w:val="single" w:sz="10" w:space="0" w:color="{TG}"/><w:left w:val="single" w:sz="10" w:space="0" w:color="{TG}"/><w:bottom w:val="single" w:sz="10" w:space="0" w:color="{TG}"/><w:right w:val="single" w:sz="10" w:space="0" w:color="{TG}"/></w:tcBorders>',
+                  "none":    "<w:tcBorders/>"
+              }
+              bk = "left" if left_bar else "dash" if dashed else "outline" if outline else "none"
+              tcPr = (f'<w:tcPr><w:tcW w:w="{CW}" w:type="dxa"/>{bdr[bk]}'
+                      f'<w:shd w:val="clear" w:color="auto" w:fill="{fill}"/>'
+                      f'<w:tcMar><w:top w:w="100" w:type="dxa"/><w:left w:w="180" w:type="dxa"/>'
+                      f'<w:bottom w:w="100" w:type="dxa"/><w:right w:w="180" w:type="dxa"/></w:tcMar></w:tcPr>')
+              tblPr = f'<w:tblPr><w:tblW w:w="{CW}" w:type="dxa"/></w:tblPr>'
+              grid  = f'<w:tblGrid><w:gridCol w:w="{CW}"/></w:tblGrid>'
+              cell  = f'<w:tc>{tcPr}{"".join(paras)}</w:tc>'
+              return f'<w:tbl>{tblPr}{grid}<w:tr>{cell}</w:tr></w:tbl>'
+
+          # ── Komponenten ──────────────────────────────────────────────────
+          def banner(nr, titel, subtitle):
+              b = f'<w:tcBorders><w:top w:val="single" w:sz="12" w:space="0" w:color="{TGD}"/><w:left w:val="thick" w:sz="40" w:space="0" w:color="{TG}"/><w:bottom w:val="single" w:sz="12" w:space="0" w:color="{TGD}"/><w:right w:val="single" w:sz="12" w:space="0" w:color="{TGD}"/></w:tcBorders>'
+              tcPr = f'<w:tcPr><w:tcW w:w="{CW}" w:type="dxa"/>{b}<w:shd w:val="clear" w:color="auto" w:fill="FFFFFF"/><w:tcMar><w:top w:w="160" w:type="dxa"/><w:left w:w="220" w:type="dxa"/><w:bottom w:w="160" w:type="dxa"/><w:right w:w="220" w:type="dxa"/></w:tcMar></w:tcPr>'
+              paras = [
+                  para(run(f"ANLEITUNG {nr}", 18, bold=True, color=TGD), sb=60, sa=40),
+                  para(run(titel, 40, bold=True, color=TG), sa=60),
+                  para(run(subtitle, 20, color="888888", italic=True), sa=60),
+              ]
+              tblPr = f'<w:tblPr><w:tblW w:w="{CW}" w:type="dxa"/></w:tblPr>'
+              grid  = f'<w:tblGrid><w:gridCol w:w="{CW}"/></w:tblGrid>'
+              cell  = f'<w:tc>{tcPr}{"".join(paras)}</w:tc>'
+              return f'<w:tbl>{tblPr}{grid}<w:tr>{cell}</w:tr></w:tbl>'
+
+          def why_box(text):
+              return tbl([para(run("💡 Warum wichtig?   ", 22, bold=True, color="333333") + run(text, 22, color="444444"))], fill=JQ, left_bar=True)
+
+          def step_head(text):
+              return para(run(text, 28, bold=True, color=TG), sb=200, sa=80)
+
+          def illust_box(prompt):
+              return tbl([
+                  para(run("🎨  Illustration — ", 22, bold=True, color=TGD) + run("Prompt für Gemini / Bild-KI:", 20, bold=True, color="444444"), sa=80),
+                  para(run(prompt, 20, color="1A1A1A"), sa=0)
+              ], fill="EDFFF8", outline=True)
+
+          def ss_box(desc, filename):
+              return tbl([
+                  para(run("📷  PLATZHALTER: Echter Screenshot", 22, bold=True, color="333333"), align="center", sa=80),
+                  para(run("Beschreibung: ", 20, bold=True, color="555555") + run(desc, 20, color="555555"), sa=40),
+                  para(run("Dateiname: ", 18, bold=True, color="888888") + run(filename, 18, italic=True, color="888888"), sa=0),
+              ], fill=JQ, dashed=True)
+
+          def info_box(label, lines):
+              return tbl(
+                  [para(run(label, 23, bold=True, color="222222"), sa=80)] +
+                  [para(run(l, 21, color="444444"), sa=60) for l in lines],
+                  fill=JQ, left_bar=True)
+
+          def num_list(items):
+              return [para(run(f"{i+1}.  ", 22, bold=True, color=TGD) + run(t, 22, color="333333"), ind=360, sa=60) for i, t in enumerate(items)]
+
+          def footer_bar(tag):
+              return tbl([para(run("🪟 W11 Daily Tutor  |  ", 18, color="888888") + run(tag, 18, bold=True, color=TGD) + run("  |  Für Schüler & Lehrer", 18, color="888888"), align="center")], fill="F8F8F8")
+
+          # ── Anleitung → XML ──────────────────────────────────────────────
+          def build_xml(a, datum):
+              parts = []
+              parts.append(banner(a["nr"], a["titel"], f"Tag {datum}  |  {a['kategorie']}  |  {a['dauer']}"))
+              parts.append(sp(80))
+              parts.append(why_box(a["warum"]))
+              parts.append(sp(40))
+              parts.append(hr())
+              for s in a["schritte"]:
+                  parts.append(step_head(f"SCHRITT {s['nr']}: {s['aktion']}"))
+                  parts.append(para(run(s["erklaerung"], 22, color="333333"), sa=80))
+                  parts.append(illust_box(a.get("illust_prompt", f"Flat-design cartoon illustration for Windows 11 tutorial step {s['nr']}. Style: school-friendly, turquoise green #06F4A1 and jonquil yellow #F0FC9C, no text in image.")))
+                  parts.append(sp(80))
+                  parts.append(ss_box(f"Screenshot für Schritt {s['nr']}: {s['aktion']}", f"screenshot_anleitung{a['nr']}_schritt{s['nr']}.png"))
+                  parts.append(sp(80))
+              parts.append(hr())
+              parts.append(info_box("🎯 QUICK TIP:", [a["quicktip"]]))
+              parts.append(sp(80))
+              parts.append(info_box("💡 W11-INTEGRATION:", [a["w11_integration"]]))
+              parts.append(sp(80))
+              parts.append(info_box("❓ HÄUFIGE FRAGEN:", [f"F: {a['faq_frage']}", f"A: {a['faq_antwort']}"]))
+              parts.append(sp(80))
+              parts.append(info_box("🎓 FÜR DEN UNTERRICHT:", [a["unterricht"]]))
+              parts.append(sp(120))
+              parts.append(footer_bar(f"{a['kategorie']}  |  {datum}"))
+              return parts
+
+          # ── .docx aus Vorlage bauen ──────────────────────────────────────
+          def build_docx(xml_parts, out_path, template_path):
+              body = "".join(xml_parts)
+              new_doc = f"{NS}<w:body>{body}{SECT_PR}</w:body></w:document>"
+              with zipfile.ZipFile(template_path, "r") as zin:
+                  with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zout:
+                      for item in zin.infolist():
+                          data = new_doc.encode("utf-8") if item.filename == "word/document.xml" else zin.read(item.filename)
+                          zout.writestr(item, data)
+              print(f"✅ {Path(out_path).name}  ({Path(out_path).stat().st_size // 1024} KB)")
+
+          # ── Claude API aufrufen ──────────────────────────────────────────
           client = anthropic.Anthropic()
-          today = date.today()
+          today  = date.today()
+          datum  = today.strftime("%d.%m.%Y")
 
-          prompt = "Erstelle 2 Windows 11 Anleitungen auf Deutsch. Anleitung 1 Kategorie W11 Basics, Anleitung 2 Kategorie OneDrive. Antworte NUR mit validem JSON ohne Backticks: {\"anleitungen\": [{\"nr\": 1, \"titel\": \"Emoji Titel\", \"warum\": \"Nutzen\", \"kategorie\": \"W11\", \"dauer\": \"5 Min\", \"schritte\": [{\"nr\": 1, \"aktion\": \"Aktion\", \"erklaerung\": \"Text\"}, {\"nr\": 2, \"aktion\": \"Aktion\", \"erklaerung\": \"Text\"}, {\"nr\": 3, \"aktion\": \"Aktion\", \"erklaerung\": \"Text\"}], \"quicktip\": \"Tipp\", \"w11_integration\": \"Hinweis\", \"faq_frage\": \"Frage?\", \"faq_antwort\": \"Antwort\", \"unterricht\": \"Aufgabe\"}, {\"nr\": 2, \"titel\": \"Emoji Titel\", \"warum\": \"Nutzen\", \"kategorie\": \"OneDrive\", \"dauer\": \"5 Min\", \"schritte\": [{\"nr\": 1, \"aktion\": \"Aktion\", \"erklaerung\": \"Text\"}, {\"nr\": 2, \"aktion\": \"Aktion\", \"erklaerung\": \"Text\"}, {\"nr\": 3, \"aktion\": \"Aktion\", \"erklaerung\": \"Text\"}], \"quicktip\": \"Tipp\", \"w11_integration\": \"Hinweis\", \"faq_frage\": \"Frage?\", \"faq_antwort\": \"Antwort\", \"unterricht\": \"Aufgabe\"}]}"
+          WEEKLY = {0:("W11","OneDrive"), 1:("Office365","Teams"), 2:("W11","Edge"),
+                    3:("Teams","OneDrive"), 4:("Office365","W11"), 5:("Edge","Teams"), 6:("W11","OneDrive")}
+          cat1, cat2 = WEEKLY[today.weekday()]
 
+          prompt = f"""Erstelle 2 Windows 11 Anleitungen für {datum} auf Deutsch.
+          Anleitung 1: Kategorie "{cat1}". Anleitung 2: Kategorie "{cat2}".
+          Antworte NUR mit validem JSON (keine Backticks, kein Text davor/danach):
+          {{
+            "anleitungen": [
+              {{
+                "nr": 1, "titel": "Emoji + Titel (max 6 Wörter)",
+                "warum": "1 Satz Nutzen für Lehrer/Schüler",
+                "kategorie": "{cat1}", "dauer": "5 Min",
+                "schritte": [
+                  {{"nr": 1, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklärung"}},
+                  {{"nr": 2, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklärung"}},
+                  {{"nr": 3, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklärung"}}
+                ],
+                "illust_prompt": "Detailed English image prompt for Gemini: flat-design cartoon, school style, turquoise #06F4A1 and jonquil #F0FC9C, no text in image, describe exactly what to show",
+                "quicktip": "Tastenkürzel oder schnellster Weg",
+                "w11_integration": "Wie Feature mit W11 zusammenspielt",
+                "faq_frage": "Typische Anfänger-Frage",
+                "faq_antwort": "Kurze klare Antwort",
+                "unterricht": "Konkrete Schüleraufgabe in 2-3 Schritten"
+              }},
+              {{
+                "nr": 2, "titel": "Emoji + Titel (max 6 Wörter)",
+                "warum": "1 Satz Nutzen für Lehrer/Schüler",
+                "kategorie": "{cat2}", "dauer": "5 Min",
+                "schritte": [
+                  {{"nr": 1, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklärung"}},
+                  {{"nr": 2, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklärung"}},
+                  {{"nr": 3, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklärung"}}
+                ],
+                "illust_prompt": "Detailed English image prompt for Gemini: flat-design cartoon, school style, turquoise #06F4A1 and jonquil #F0FC9C, no text in image, describe exactly what to show",
+                "quicktip": "Tastenkürzel oder schnellster Weg",
+                "w11_integration": "Wie Feature mit W11 zusammenspielt",
+                "faq_frage": "Typische Anfänger-Frage",
+                "faq_antwort": "Kurze klare Antwort",
+                "unterricht": "Konkrete Schüleraufgabe in 2-3 Schritten"
+              }}
+            ]
+          }}"""
+
+          print(f"🤖 Claude wird aufgerufen für {datum} ({cat1} + {cat2})...")
           resp = client.messages.create(
               model="claude-haiku-4-5-20251001",
               max_tokens=3000,
@@ -43,36 +258,36 @@ jobs:
           raw = re.sub(r"^```[a-z]*\s*", "", raw)
           raw = re.sub(r"\s*```$", "", raw)
           data = json.loads(raw)
+          print(f"✅ Claude hat {len(data['anleitungen'])} Anleitungen generiert")
 
+          # Template suchen
+          template = None
+          for p in ["W11_DailyTutor_GitHub_Setup/template/Vorlage_Fachschaft_Digitalitaet.dotx",
+                    "template/Vorlage_Fachschaft_Digitalitaet.dotx"]:
+              if Path(p).exists():
+                  template = p
+                  break
+          if not template:
+              raise FileNotFoundError("Vorlage nicht gefunden!")
+          print(f"📄 Vorlage gefunden: {template}")
+
+          # Output-Ordner
           out_dir = Path("output") / today.strftime("%d-%m-%Y")
           out_dir.mkdir(parents=True, exist_ok=True)
 
+          # Beide .docx bauen
           for a in data["anleitungen"]:
               titel_safe = re.sub(r"[^\w]", "_", a["titel"])[:40]
-              fname = out_dir / f"W11_Anleitung{a['nr']}_{titel_safe}.md"
-              lines = [
-                  f"# {a['titel']}",
-                  f"**Warum:** {a['warum']}",
-                  f"**Kategorie:** {a['kategorie']} | **Dauer:** {a['dauer']}",
-                  "", "---", "",
-              ]
-              for s in a["schritte"]:
-                  lines += [f"## Schritt {s['nr']}: {s['aktion']}", s["erklaerung"], "", f"Screenshot Platzhalter Schritt {s['nr']}", ""]
-              lines += [
-                  "---", "",
-                  f"Quick Tip: {a['quicktip']}", "",
-                  f"W11-Integration: {a['w11_integration']}", "",
-                  f"Frage: {a['faq_frage']}",
-                  f"Antwort: {a['faq_antwort']}", "",
-                  f"Unterricht: {a['unterricht']}"
-              ]
-              fname.write_text("\n".join(lines), encoding="utf-8")
-              print(f"OK: {fname}")
+              fname = out_dir / f"W11_{datum}_Anleitung{a['nr']}_{titel_safe}.docx"
+              xml_parts = build_xml(a, datum)
+              build_docx(xml_parts, str(fname), template)
 
-      - name: Dateien speichern
+          print(f"\n🎉 Fertig! Dateien in: {out_dir}")
+
+      - name: Dateien in GitHub speichern
         run: |
-          git config user.name "W11 Bot"
-          git config user.email "bot@w11.local"
+          git config user.name "W11 Daily Tutor Bot"
+          git config user.email "bot@w11-tutor.local"
           git add output/
-          git diff --cached --quiet || git commit -m "W11 Anleitungen $(date +'%d.%m.%Y')"
+          git diff --cached --quiet || git commit -m "📚 W11 Anleitungen $(date +'%d.%m.%Y') (.docx)"
           git push

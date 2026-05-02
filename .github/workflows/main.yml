@@ -1,0 +1,34 @@
+name: W11 Daily Tutor
+
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install anthropic
+
+      - name: Anleitungen generieren
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python scripts/gen_daily.py
+
+      - name: Dateien speichern
+        run: |
+          git config user.name "W11 Bot"
+          git config user.email "bot@w11.local"
+          git add output/
+          git diff --cached --quiet || git commit -m "W11 Anleitungen $(date +'%d.%m.%Y')"
+          git push

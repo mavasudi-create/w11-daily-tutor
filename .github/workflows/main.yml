@@ -27,7 +27,7 @@ jobs:
 
       - name: Pakete installieren
         run: |
-          npm install -g docx
+          npm install docx
           pip install anthropic
 
       - name: Anleitungen generieren

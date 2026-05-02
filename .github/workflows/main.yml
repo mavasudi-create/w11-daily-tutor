@@ -2,8 +2,8 @@ name: W11 Daily Tutor
 
 on:
   schedule:
-    - cron: "0 5 * * *"   # Täglich 06:00 Uhr Schweizer Zeit
-  workflow_dispatch:        # Auch manuell startbar
+    - cron: "0 5 * * *"
+  workflow_dispatch:
 
 jobs:
   generate:
@@ -40,19 +40,19 @@ jobs:
           from pathlib import Path
 
           WEEKLY = {
-            0: ("W11 Basics",  "OneDrive"),
-            1: ("Office 365",  "Teams"),
-            2: ("W11 Basics",  "Edge"),
-            3: ("Teams",       "OneDrive"),
-            4: ("Office 365",  "W11 Basics"),
-            5: ("Edge",        "Teams"),
-            6: ("W11 Basics",  "OneDrive"),
+            0: ("W11 Basics", "OneDrive"),
+            1: ("Office 365", "Teams"),
+            2: ("W11 Basics", "Edge"),
+            3: ("Teams",      "OneDrive"),
+            4: ("Office 365", "W11 Basics"),
+            5: ("Edge",       "Teams"),
+            6: ("W11 Basics", "OneDrive"),
           }
 
           today = date.today()
           datum = today.strftime("%d.%m.%Y")
           cat1, cat2 = WEEKLY[today.weekday()]
-          print(f"Generiere Anleitungen fuer {datum}: {cat1} + {cat2}")
+          print(f"Datum: {datum} | Kategorien: {cat1} + {cat2}")
 
           client = anthropic.Anthropic()
           resp = client.messages.create(
@@ -60,47 +60,31 @@ jobs:
             max_tokens=3000,
             messages=[{"role": "user", "content": f"""Erstelle 2 Windows 11 Anleitungen auf Deutsch fuer {datum}.
           Anleitung 1: Kategorie {cat1}. Anleitung 2: Kategorie {cat2}.
-          Antworte NUR mit diesem JSON (keine Backticks):
-          {{
-            "anleitungen": [
-              {{
-                "nr": 1,
-                "titel": "Kurzer Titel max 5 Woerter",
-                "warum": "1 Satz Nutzen fuer Lehrer oder Schueler",
-                "kategorie": "{cat1}",
-                "dauer": "5 Min",
-                "schritte": [
-                  {{"nr": 1, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklaerung"}},
-                  {{"nr": 2, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklaerung"}},
-                  {{"nr": 3, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklaerung"}}
-                ],
-                "illust_prompt": "Detailed English prompt for Gemini: flat-design cartoon school style, turquoise #06F4A1 and jonquil #F0FC9C, no text in image",
-                "quicktip": "Tastenkuerzel oder schnellster Weg",
-                "w11_integration": "Wie dieses Feature mit Windows 11 zusammenspielt",
-                "faq_frage": "Typische Anfaenger-Frage",
-                "faq_antwort": "Kurze klare Antwort",
-                "unterricht": "Konkrete Schueleraufgabe in 3 Schritten"
-              }},
-              {{
-                "nr": 2,
-                "titel": "Kurzer Titel max 5 Woerter",
-                "warum": "1 Satz Nutzen fuer Lehrer oder Schueler",
-                "kategorie": "{cat2}",
-                "dauer": "5 Min",
-                "schritte": [
-                  {{"nr": 1, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklaerung"}},
-                  {{"nr": 2, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklaerung"}},
-                  {{"nr": 3, "aktion": "Imperativ-Satz", "erklaerung": "Kurze Erklaerung"}}
-                ],
-                "illust_prompt": "Detailed English prompt for Gemini: flat-design cartoon school style, turquoise #06F4A1 and jonquil #F0FC9C, no text in image",
-                "quicktip": "Tastenkuerzel oder schnellster Weg",
-                "w11_integration": "Wie dieses Feature mit Windows 11 zusammenspielt",
-                "faq_frage": "Typische Anfaenger-Frage",
-                "faq_antwort": "Kurze klare Antwort",
-                "unterricht": "Konkrete Schueleraufgabe in 3 Schritten"
-              }}
-            ]
-          }}"""}]
+          Antworte NUR mit diesem JSON ohne Backticks:
+          {{"anleitungen": [
+            {{"nr": 1, "titel": "Kurzer Titel", "warum": "1 Satz Nutzen",
+              "kategorie": "{cat1}", "dauer": "5 Min",
+              "schritte": [
+                {{"nr": 1, "aktion": "Aktion", "erklaerung": "Erklaerung"}},
+                {{"nr": 2, "aktion": "Aktion", "erklaerung": "Erklaerung"}},
+                {{"nr": 3, "aktion": "Aktion", "erklaerung": "Erklaerung"}}
+              ],
+              "illust_prompt": "Flat-design cartoon school style, turquoise #06F4A1 and jonquil #F0FC9C, no text in image, describe what to show",
+              "quicktip": "Tipp", "w11_integration": "W11 Hinweis",
+              "faq_frage": "Frage?", "faq_antwort": "Antwort",
+              "unterricht": "Schueleraufgabe"}},
+            {{"nr": 2, "titel": "Kurzer Titel", "warum": "1 Satz Nutzen",
+              "kategorie": "{cat2}", "dauer": "5 Min",
+              "schritte": [
+                {{"nr": 1, "aktion": "Aktion", "erklaerung": "Erklaerung"}},
+                {{"nr": 2, "aktion": "Aktion", "erklaerung": "Erklaerung"}},
+                {{"nr": 3, "aktion": "Aktion", "erklaerung": "Erklaerung"}}
+              ],
+              "illust_prompt": "Flat-design cartoon school style, turquoise #06F4A1 and jonquil #F0FC9C, no text in image, describe what to show",
+              "quicktip": "Tipp", "w11_integration": "W11 Hinweis",
+              "faq_frage": "Frage?", "faq_antwort": "Antwort",
+              "unterricht": "Schueleraufgabe"}}
+          ]}}"""}]
           )
 
           raw = resp.content[0].text.strip()
@@ -111,14 +95,14 @@ jobs:
           Path("output_data").mkdir(exist_ok=True)
           with open("output_data/today.json", "w", encoding="utf-8") as f:
               json.dump({"datum": datum, "anleitungen": data["anleitungen"]}, f, ensure_ascii=False, indent=2)
-          print(f"✅ JSON gespeichert: {len(data['anleitungen'])} Anleitungen")
+          print(f"✅ {len(data['anleitungen'])} Anleitungen gespeichert")
           PYEOF
 
       - name: Word-Dokumente erstellen
         run: |
-          node - <<'JSEOF'
+          cat > generate_docs.js << 'JSEOF'
           const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
-                  AlignmentType, BorderStyle, WidthType, ShadingType, LevelFormat } = require('./node_modules/docx');
+                  AlignmentType, BorderStyle, WidthType, ShadingType, LevelFormat } = require('docx');
           const fs = require('fs');
 
           const data  = JSON.parse(fs.readFileSync('output_data/today.json', 'utf8'));
@@ -134,12 +118,12 @@ jobs:
           const t = (text, opts={}) => new TextRun({ text, font: FONT, ...opts });
           const p = (runs, opts={}) => new Paragraph({
             children: Array.isArray(runs) ? runs : [runs],
-            spacing: { before: 0, after: 120 }, ...opts
+            spacing: { before:0, after:120 }, ...opts
           });
           const sp = (after=160) => new Paragraph({ children:[t("")], spacing:{before:0,after} });
           const hr = () => new Paragraph({
             children: [],
-            border: { bottom: { style: BorderStyle.SINGLE, size:8, color:TG, space:1 } },
+            border: { bottom: { style:BorderStyle.SINGLE, size:8, color:TG, space:1 } },
             spacing: { before:160, after:160 }
           });
 
@@ -205,7 +189,7 @@ jobs:
 
           const whyBox = (text) => oneColTable(leftBarCell([
             p([t("Warum wichtig?   ",{size:22,bold:true,color:BLACK}),
-               t(text,{size:22,color:GREY})], {spacing:{before:0,after:0}})
+               t(text,{size:22,color:GREY})],{spacing:{before:0,after:0}})
           ], JQ));
 
           const stepHead = (text) =>
@@ -222,9 +206,9 @@ jobs:
             p(t("PLATZHALTER: Echter Screenshot",{size:21,bold:true,color:BLACK}),
               {alignment:AlignmentType.CENTER,spacing:{before:0,after:80}}),
             p([t("Beschreibung: ",{size:20,bold:true,color:GREY}),
-               t(desc,{size:20,color:GREY})], {spacing:{before:0,after:40}}),
+               t(desc,{size:20,color:GREY})],{spacing:{before:0,after:40}}),
             p([t("Dateiname: ",{size:18,bold:true,color:LGREY}),
-               t(fname,{size:18,italics:true,color:LGREY})], {spacing:{before:0,after:0}})
+               t(fname,{size:18,italics:true,color:LGREY})],{spacing:{before:0,after:0}})
           ]));
 
           const infoBox = (label, lines) => oneColTable(leftBarCell([
@@ -236,10 +220,8 @@ jobs:
             width:{size:CW,type:WidthType.DXA},
             shading:{fill:"F5F5F5",type:ShadingType.CLEAR},
             margins:{top:120,bottom:120,left:180,right:180},
-            borders:{
-              top:{style:BorderStyle.NONE},bottom:{style:BorderStyle.NONE},
-              left:{style:BorderStyle.NONE},right:{style:BorderStyle.NONE}
-            },
+            borders:{top:{style:BorderStyle.NONE},bottom:{style:BorderStyle.NONE},
+                     left:{style:BorderStyle.NONE},right:{style:BorderStyle.NONE}},
             children:[p([
               t("W11 Daily Tutor  |  ",{size:18,color:LGREY}),
               t(tag,{size:18,bold:true,color:TG}),
@@ -254,8 +236,7 @@ jobs:
                        run:{font:FONT,bold:true,color:TG}}}]},
             { reference:"bullist", levels:[{ level:0, format:LevelFormat.BULLET, text:"*",
                 alignment:AlignmentType.LEFT,
-                style:{paragraph:{indent:{left:600,hanging:360}},
-                       run:{font:FONT}}}]}
+                style:{paragraph:{indent:{left:600,hanging:360}},run:{font:FONT}}}]}
           ]};
 
           const styles = { default:{ document:{ run:{ font:FONT, size:22, color:BLACK }}}};
@@ -274,17 +255,14 @@ jobs:
             kids.push(banner(a.nr, a.titel, `${datum}  |  ${a.kategorie}  |  ${a.dauer}`));
             kids.push(sp(100));
             kids.push(whyBox(a.warum));
-            kids.push(sp(60));
-            kids.push(hr());
+            kids.push(sp(60)); kids.push(hr());
             for (const s of a.schritte) {
               kids.push(stepHead(`SCHRITT ${s.nr}: ${s.aktion}`));
               kids.push(p(t(s.erklaerung,{size:22,color:GREY}),{spacing:{before:0,after:80}}));
               kids.push(illustBox(a.illust_prompt));
               kids.push(sp(80));
-              kids.push(ssBox(
-                `Screenshot fuer Schritt ${s.nr}: ${s.aktion}`,
-                `screenshot_anleitung${a.nr}_schritt${s.nr}.png`
-              ));
+              kids.push(ssBox(`Screenshot Schritt ${s.nr}: ${s.aktion}`,
+                              `screenshot_anleitung${a.nr}_schritt${s.nr}.png`));
               kids.push(sp(80));
             }
             kids.push(hr());
@@ -292,10 +270,7 @@ jobs:
             kids.push(sp(80));
             kids.push(infoBox("W11-INTEGRATION:", [a.w11_integration]));
             kids.push(sp(80));
-            kids.push(infoBox("HAEUFIGE FRAGEN:", [
-              `F: ${a.faq_frage}`,
-              `A: ${a.faq_antwort}`
-            ]));
+            kids.push(infoBox("HAEUFIGE FRAGEN:", [`F: ${a.faq_frage}`, `A: ${a.faq_antwort}`]));
             kids.push(sp(80));
             kids.push(infoBox("FUER DEN UNTERRICHT:", [a.unterricht]));
             kids.push(sp(120));
@@ -308,18 +283,18 @@ jobs:
 
           (async () => {
             for (const a of data.anleitungen) {
-              const doc = new Document({
-                numbering, styles,
-                sections:[{...pageProps, children:buildChildren(a)}]
-              });
+              const doc = new Document({ numbering, styles,
+                sections:[{...pageProps, children:buildChildren(a)}] });
               const buf = await Packer.toBuffer(doc);
               const safe = a.titel.replace(/[^\w]/g,"_").substring(0,40);
               const fname = `${outDir}/W11_${datum}_Anleitung${a.nr}_${safe}.docx`;
               fs.writeFileSync(fname, buf);
               console.log(`OK: ${fname}  (${Math.round(buf.length/1024)} KB)`);
             }
+            console.log("FERTIG");
           })().catch(e => { console.error("FEHLER:", e.message); process.exit(1); });
           JSEOF
+          node generate_docs.js
 
       - name: Dateien in GitHub speichern
         run: |
